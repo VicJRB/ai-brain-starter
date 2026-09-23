@@ -146,31 +146,53 @@ fi
 #
 # The same failure has a second cause on macOS/Linux: a Claude Code plugin can
 # put a WRAPPER named `python3` (and `python`) ahead of the real interpreter on
-# PATH — the trailofbits modern-python shim refuses a bare call outright
-# ("Use `uv run python3 ...` instead"). Both candidates then satisfy
-# `command -v`, both fail the probe, `py` does not exist off Windows, and
-# PY_CMD ends up EMPTY -> "no Meta folder" -> a silent no-op that kept
-# journal-preflight.py out of the vault entirely (found 2026-08-30: the
-# /journal Step-0 guard was left unsatisfiable because its script never
-# shipped). So the list continues past a shimmed PATH: an explicit $PYTHON
-# first, then `uv run python3`, then absolute interpreter paths a PATH shim
-# cannot shadow. The probe stays the sole arbiter — a candidate is used only if
-# it actually reports major version 3.
+# PATH. trailofbits/modern-python refuses the call outright ("Use
+# `uv run python3 ...` instead"). Both candidates then satisfy `command -v`,
+# both fail the probe, `py` does not exist off Windows, and PY_CMD ended up
+# EMPTY -> "no Meta folder" -> a silent no-op that kept journal-preflight.py
+# out of the vault entirely, leaving the /journal Step-0 guard asking for a
+# script that had never shipped (measured 2026-08-30).
+#
+# The fallback is the VERSIONED names, exactly as pick_python() does it in
+# bootstrap.sh: the shim dir ships `python`, `python3`, `pip`, `pip3`, `pipx`
+# and `uv` and no version-suffixed name, so `python3.13` reaches the real
+# interpreter a PATH wrapper cannot shadow -- and it stays correct on Linux,
+# where the absolute Homebrew paths a macOS-only fix would hardcode do not
+# exist. AI_BRAIN_PYTHON names one directly, same spelling as bootstrap.
+#
+# The probe runs a FILE, never `-c` or `-`: the asymmetric shim shape
+# documented in tests/integration/lib/real_python.sh forwards `-c`/`-`/`-m` to
+# the real interpreter and refuses only a script path, so a `-c` probe would
+# ADOPT such a wrapper and then die at the `_meta_resolver.py` call below. The
+# sentinel, not the exit code, is what decides -- a wrapper that exits 0
+# without running the file prints nothing and is rejected.
 PY_CMD=""
-_probe_python() {
-  [ "$("$@" -c 'import sys; print(sys.version_info[0])' 2>/dev/null \
-        | head -n1 | tr -d '\r')" = "3" ]
+_pick_python() {
+  local cand probe_dir probe
+  probe_dir="$(mktemp -d)" || return 1
+  probe="$probe_dir/ai_brain_sync_probe.py"
+  if ! printf '%s\n' \
+    'import sys' \
+    'if sys.version_info[0] == 3:' \
+    '    print("__ai_brain_python_ok__")' > "$probe"; then
+    rm -rf "$probe_dir"
+    return 1
+  fi
+  for cand in "${AI_BRAIN_PYTHON:-}" python3 python "py -3" \
+              python3.14 python3.13 python3.12 python3.11 python3.10; do
+    [ -n "$cand" ] || continue
+    command -v "${cand%% *}" >/dev/null 2>&1 || continue
+    # shellcheck disable=SC2086  # `py -3` is two words; word-splitting intended
+    if [ "$($cand "$probe" 2>/dev/null | head -n1 | tr -d '\r')" \
+         = "__ai_brain_python_ok__" ]; then
+      PY_CMD="$cand"
+      break
+    fi
+  done
+  rm -rf "$probe_dir"
+  [ -n "$PY_CMD" ]
 }
-_probe_cmd() {  # candidate may be multi-word ("py -3", "uv run python3")
-  # shellcheck disable=SC2086  # word-splitting the candidate is the point
-  _probe_python $1
-}
-for _cand in ${PYTHON:+"$PYTHON"} python3 python "py -3" "uv run python3" \
-             /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
-  command -v "${_cand%% *}" >/dev/null 2>&1 || continue
-  _probe_cmd "$_cand" && { PY_CMD="$_cand"; break; }
-done
-unset _cand
+_pick_python || true
 
 # --- Resolve the vault root ---------------------------------------------------
 resolve_vault_from_settings() {

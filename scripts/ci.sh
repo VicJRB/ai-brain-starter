@@ -494,6 +494,7 @@ INTEGRATION_TESTS=(
   # to stdout and never writes the log, so a "(dry-run)" header IN the log was
   # unreachable except as a mislabel.
   test_sync_vault_scripts_dryrun_label
+  test_sync_vault_scripts_shimmed_python
   # At-rest leg of the sync-clobber class. test_vault_script_sync.sh section 1b
   # PREVENTS a manifest gap; this detects vaults already damaged, plus the case
   # closure cannot see — a committed local patch silently overwritten by the sync

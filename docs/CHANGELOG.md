@@ -19,7 +19,9 @@ A plugin wrapper breaks that list in a way the list was never built for. The wra
 
 What it printed at that point was "no Meta folder — skipping (non-fatal)", and then it exited 0. Success, as far as anything watching it could tell. Nothing had been installed. `journal-preflight.py` in particular never reached the vault, which left the /journal Step 0 guard asking for a script that was not there — unsatisfiable, so `JOURNAL_CONTEXT_BYPASS=1` became routine and the guard quietly stopped guarding.
 
-The candidate list now continues past a shimmed PATH: an explicit `$PYTHON` first, then `uv run python3`, then the absolute interpreter paths a PATH wrapper cannot shadow. The probe is still the only thing that decides — a candidate is used only if it really reports major version 3 — so nothing here trusts a name.
+The candidate list now continues past a shimmed PATH the same way `bootstrap.sh` already did: `AI_BRAIN_PYTHON` if you set it, then the version-suffixed names. A wrapper dir ships `python` and `python3` and nothing versioned, so `python3.13` reaches the real interpreter — and unlike hardcoding `/opt/homebrew/...`, that still works on Linux.
+
+The probe also runs a real file now instead of `python3 -c`. Some wrappers forward `-c` to the genuine interpreter and refuse only a script path, and this script needs a script path — so a `-c` probe would happily accept a wrapper that then fails on the one call it was chosen for.
 
 ---
 
