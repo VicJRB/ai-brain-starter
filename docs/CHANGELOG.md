@@ -9,6 +9,20 @@ description: What's new in AI Brain Starter — plain English, no jargon
 
 ---
 
+## 2026-10-02: on some Macs the vault scripts were never installing at all
+
+**Who this affects:** anyone running a Claude Code plugin that puts its own `python3` wrapper on PATH — the trailofbits modern-python plugin is the common one. Mac and Linux both.
+
+`sync-vault-scripts.sh` is what copies the helper scripts into your vault. Before it can do that it has to find a working Python 3, so it walks a short list of candidates — `python3`, `python`, `py` — and keeps the first one that actually reports version 3.
+
+A plugin wrapper breaks that list in a way the list was never built for. The wrapper is named `python3` and it sits on PATH, so it looks like a real candidate. Call it and it refuses outright: *"Use `uv run python3 ...` instead."* Same for `python`. And `py` does not exist off Windows. All three candidates fail, the script ends up with no interpreter at all, and the resolver that locates your Meta folder never runs.
+
+What it printed at that point was "no Meta folder — skipping (non-fatal)", and then it exited 0. Success, as far as anything watching it could tell. Nothing had been installed. `journal-preflight.py` in particular never reached the vault, which left the /journal Step 0 guard asking for a script that was not there — unsatisfiable, so `JOURNAL_CONTEXT_BYPASS=1` became routine and the guard quietly stopped guarding.
+
+The candidate list now continues past a shimmed PATH: an explicit `$PYTHON` first, then `uv run python3`, then the absolute interpreter paths a PATH wrapper cannot shadow. The probe is still the only thing that decides — a candidate is used only if it really reports major version 3 — so nothing here trusts a name.
+
+---
+
 ## 2026-10-01: `/journal` dropped your messages on machines where `python3` refuses to run a script
 
 **Who this affects:** anyone who runs `/journal` with a message reader script in their vault (`journal-messages-fetch.py`), on a machine where a Python tool puts its own stand-in for `python3` first on the PATH. Some of those stand-ins answer `python3 some-script.py` with advice ("use `uv run python ...`") and exit with an error, while still running one-liners, so nothing looks broken.
