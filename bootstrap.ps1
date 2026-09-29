@@ -1367,6 +1367,49 @@ foreach ($sub in @("graphify", "cierre-de-llamada", "meeting-todos", "patterns",
     }
 }
 
+# _shared ships the guard helpers ingest-github/ingest-youtube import
+# (guard_untrusted_body/fence_untrusted). It carries no SKILL.md, so it is
+# deliberately outside the named "foreach ($sub in @(...))" list above (and
+# that list's own parity guard, scripts/test_bootstrap_install_parity.py,
+# which requires every listed name to ship one). Without this, a fresh
+# per-skill install never lands a sibling _shared dir, so every
+# third-party write from those two skills silently degrades to
+# injection_scan: unavailable.
+$sharedSrc = "$SkillDir\skills\_shared"
+$sharedDst = "$env:USERPROFILE\.claude\skills\_shared"
+if ((Test-Path $sharedDst) -and ((Get-Item $sharedDst -ErrorAction SilentlyContinue).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+    Warn "_shared is a SYMLINK - bootstrap will NOT write through it"
+} elseif (Test-Path "$sharedDst\.git") {
+    Log "_shared has its own .git directory - detected as YOUR FORK, skipping entirely"
+} elseif (Test-Path $sharedSrc) {
+    if ($DryRun) {
+        Dry "would sync _shared from $sharedSrc to $sharedDst (with backup-before-overwrite)"
+    } else {
+        New-Item -ItemType Directory -Force -Path $sharedDst | Out-Null
+        # File-by-file sync with backup-before-overwrite (mirrors the sub-skill loop above)
+        $sharedBackedUp = 0
+        $sharedCreated = 0
+        Get-ChildItem -Recurse -File $sharedSrc | ForEach-Object {
+            $rel = $_.FullName.Substring($sharedSrc.Length + 1)
+            $dstFile = Join-Path $sharedDst $rel
+            $dstParent = Split-Path $dstFile -Parent
+            if (-not (Test-Path $dstParent)) { New-Item -ItemType Directory -Force -Path $dstParent | Out-Null }
+            if (Test-Path $dstFile) {
+                if ((Get-FileHash $_.FullName).Hash -ne (Get-FileHash $dstFile).Hash) {
+                    Copy-Item $dstFile "$dstFile.bak-$stamp"
+                    $script:Backups += "$dstFile.bak-$stamp"
+                    Copy-Item -Force $_.FullName $dstFile
+                    $sharedBackedUp++
+                }
+            } else {
+                Copy-Item -Force $_.FullName $dstFile
+                $sharedCreated++
+            }
+        }
+        Ok "_shared: $sharedCreated new, $sharedBackedUp backed up"
+    }
+}
+
 # ─── Slash commands ───────────────────────────────────────────────────────────
 # Install commands/*.md into ~/.claude/commands/.
 #

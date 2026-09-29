@@ -213,6 +213,15 @@ if [ -n "${GITHUB_ACTIONS:-}" ] && ! python3 -c "import yaml" >/dev/null 2>&1; t
     || echo "    (PyYAML install failed; test_extractors_localized_vault will SKIP)"
 fi
 
+# Pinned HERE (before HOME goes decoy) and exported: run_sandboxed swaps
+# HOME/USERPROFILE per suite, so a suite computing this itself would
+# resolve against the WRONG (decoy) home. Guarded by GITHUB_ACTIONS --
+# the only case PyYAML was just installed --user under the real HOME.
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  PYTHONUSERBASE="$(python3 -m site --user-base)"
+  export PYTHONUSERBASE
+fi
+
 # ---- (a) Python syntax gate ------------------------------------------------
 if command -v python3.9 >/dev/null 2>&1; then
   PY=python3.9
@@ -355,6 +364,7 @@ INTEGRATION_TESTS=(
   test_open_core_boundary
   test_template_purity
   test_audited_content_injection_scan
+  test_untrusted_ingest_guard
   test_post_tool_use_learnings
   # Wired 2026-07-02 — found dormant by the gate-coverage invariant below.
   # These existed on disk, passed locally, and never ran in CI.

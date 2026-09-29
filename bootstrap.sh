@@ -1749,6 +1749,48 @@ if [[ ${#SKILLS_TO_SYNC[@]} -gt 0 ]]; then
   fi
 fi
 
+# _shared ships the guard helpers ingest-github/ingest-youtube import
+# (guard_untrusted_body/fence_untrusted). It carries no SKILL.md, so it is
+# deliberately outside the named "for sub in ...; do" list above (and that
+# list's own parity guard, scripts/test_bootstrap_install_parity.py, which
+# requires every listed name to ship one). Without this, a fresh per-skill
+# install never lands a sibling _shared dir, so every third-party write
+# from those two skills silently degrades to injection_scan: unavailable.
+shared_src="$SKILL_DIR/skills/_shared"
+shared_dst="$HOME/.claude/skills/_shared"
+if [[ -L "$shared_dst" ]]; then
+  warn "_shared is a SYMLINK — bootstrap will NOT write through it"
+elif [[ -d "$shared_dst/.git" ]]; then
+  log "_shared has its own .git/ directory — detected as YOUR FORK, skipping entirely"
+elif [[ -d "$shared_src" ]]; then
+  if [[ $DRY_RUN -eq 1 ]]; then
+    dry "would sync _shared → $shared_dst (with backup-before-overwrite)"
+  else
+    mkdir -p "$shared_dst"
+    # File-by-file sync with backup-before-overwrite (mirrors the sub-skill loop above)
+    STAMP="$(date +%Y-%m-%d-%H%M)"
+    SHARED_BACKED_UP=0
+    SHARED_CREATED=0
+    while IFS= read -r srcfile; do
+      rel="${srcfile#$shared_src/}"
+      dstfile="$shared_dst/$rel"
+      mkdir -p "$(dirname "$dstfile")"
+      if [[ -f "$dstfile" ]]; then
+        if ! cmp -s "$srcfile" "$dstfile"; then
+          cp "$dstfile" "$dstfile.bak-$STAMP"
+          BACKUPS+=("$dstfile.bak-$STAMP")
+          cp "$srcfile" "$dstfile"
+          SHARED_BACKED_UP=$((SHARED_BACKED_UP + 1))
+        fi
+      else
+        cp "$srcfile" "$dstfile"
+        SHARED_CREATED=$((SHARED_CREATED + 1))
+      fi
+    done < <(find "$shared_src" -type f)
+    ok "_shared: $SHARED_CREATED new, $SHARED_BACKED_UP backed up"
+  fi
+fi
+
 # Summary of what was protected this section
 [[ ${#SKILL_FORKS[@]} -gt 0 ]] && log "Forks preserved untouched: ${SKILL_FORKS[*]}"
 [[ ${#SKILL_SYMLINKS[@]} -gt 0 ]] && log "Symlinks preserved untouched: ${#SKILL_SYMLINKS[@]} skill(s)"
