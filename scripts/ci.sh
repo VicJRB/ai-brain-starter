@@ -522,6 +522,13 @@ INTEGRATION_TESTS=(
   # above: wired in the block-preserving form, and the shipped command
   # actually BLOCKS a seeded `env` dump while passing a clean command.
   test_installer_registers_env_dump_guard
+  # Heavy-command admission, folded into retry-budget.py: proves a fresh
+  # install ships the FLAT-deployed hook plus its heavy_admission.py and
+  # shell_parse.py deps (a HOME_HOOKS_LIB_DEPS omission left this dark
+  # despite every in-worktree test passing) end to end, against a REAL
+  # process shaped like `.../next/dist/bin/next build` (perl renamed via
+  # `exec -a`, skipped off darwin/linux or without perl).
+  test_installer_registers_heavy_admission
   # Skip-prefix privacy guard: a `__SKIP` line is content the user told the
   # assistant NOT to persist, and a persisted line cannot be un-persisted (file
   # + git history + any index over the vault). Every assertion carries a
@@ -1636,6 +1643,15 @@ PY_DIRECT=(
   # PreToolUse hook run on every Bash call. 20k-case equivalence fuzz plus a
   # structural cost test that a 1M-char segment never reaches shlex.split.
   hooks/test_shell_parse_tokens.py
+  # heavy_admission.py, folded into retry-budget.py: must-admit/must-detect
+  # corpora; real and synthetic ps-snapshot counting (root-invocation-only,
+  # node/bun script resolution, a real Next 16 process.title rewrite, a
+  # captured corepack-shape pnpm row); a git-push-as-verify leg asking a real
+  # git for the pre-push hook it would actually run (hooksPath, worktrees,
+  # husky v9); a leak control with a positive control (ps -ww -o args=
+  # DOES retrieve the token) proving the check isn't vacuous; and
+  # negative-control mutants that must each flip a verdict.
+  hooks/test_heavy_admission.py
 )
 dormant_py=()
 while IFS= read -r -d '' f; do
