@@ -9,6 +9,18 @@ description: What's new in AI Brain Starter — plain English, no jargon
 
 ---
 
+## 2026-09-25: merging main into a topic branch no longer trips the session-artifact guard, and `git merge` is guarded too
+
+**Who this affects:** anyone using `git-hooks/guard-session-artifacts-on-default-branch.sh`, the hook that refuses to commit session-close notes on a branch other than the default one, where they would strand instead of reaching it.
+
+Merging `origin/main` into a feature branch stages main's own session notes, unchanged, and the guard refused that merge, so the only way through was the bypass. A staged note is now let through when its content and file mode already match `origin/<default>`, or the commit being merged when that commit is already on the default branch. A new note, an edited one, a mode change, or a deletion the default branch does not have is still refused.
+
+A conflict-free `git merge` never runs the `pre-commit` hook, so a merge could bring another branch's session notes in with no check at all. `git-hooks/pre-merge-commit-template.sh` chains the same guard onto `pre-merge-commit`. Install it next to your pre-commit hook; its header has the two commands.
+
+The check now costs a fixed handful of `git` calls however many files are staged, reads every path byte for byte (quotes, tabs, newlines and a leading `:` included), and refuses rather than allows whenever git fails to list or compare what is staged.
+
+---
+
 ## 2026-09-25: the weekly performance digest crashed when no session in its window got a reply
 
 **Who this affects:** anyone who runs `scripts/claude_performance_digest.py` over a window in which not one session got an assistant reply. That is likeliest on a fresh install, or with a short `--days` window.
