@@ -132,11 +132,15 @@ fi
 echo 'print("FILE_RAN")' > "$WORK/x.py"
 ERR="$WORK/stderr"
 
+# Both helpers clear the environment and point HOME and USERPROFILE at the
+# same decoy (Windows Python reads USERPROFILE, not HOME), so nothing the
+# probed interpreters do can reach the real ~/.claude.
+#
 # probe PATH [NAME=VALUE ...] -> prints "PY_CMD|PY_ARGS"; the block's stderr
 # lands in $ERR.
 probe() {
     local p="$1"; shift
-    env -i HOME="$WORK/home" PATH="$p" "$@" "$BASH" -c \
+    env -i HOME="$WORK/home" USERPROFILE="$WORK/home" PATH="$p" "$@" "$BASH" -c \
         'set -u; source "$1"; printf "%s|%s" "${PY_CMD:-}" "${PY_ARGS:-}"' \
         _ "$WORK/probe_block.sh" 2>"$ERR"
 }
@@ -144,7 +148,7 @@ probe() {
 # script file, invoked the way the script's own callers invoke it.
 runs_file() {
     local p="$1"; shift
-    env -i HOME="$WORK/home" PATH="$p" "$@" "$BASH" -c \
+    env -i HOME="$WORK/home" USERPROFILE="$WORK/home" PATH="$p" "$@" "$BASH" -c \
         'set -u; source "$1"; [ -n "${PY_CMD:-}" ] || exit 0
          "$PY_CMD" ${PY_ARGS:-} "$2" 2>/dev/null' \
         _ "$WORK/probe_block.sh" "$WORK/x.py" 2>/dev/null
