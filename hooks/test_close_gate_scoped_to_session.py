@@ -178,8 +178,10 @@ class Env:
     def _env(self) -> dict:
         env = {k: v for k, v in os.environ.items()
                if k not in ("VERIFY_CASCADE_BYPASS", "VERIFY_CASCADE_SOFT")}
-        env.update(HOME=str(self.home), VAULT_ROOT=str(self.vault),
-                   ABS_RUNNER_REPORT=str(self.report))
+        # USERPROFILE too: on Windows Path.home() reads it, not HOME, and the
+        # hooks would otherwise read and write markers in the REAL ~/.claude.
+        env.update(HOME=str(self.home), USERPROFILE=str(self.home),
+                   VAULT_ROOT=str(self.vault), ABS_RUNNER_REPORT=str(self.report))
         return env
 
     def gate(self, sid: str, mode: str) -> tuple[int, str]:
