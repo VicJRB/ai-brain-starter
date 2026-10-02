@@ -161,8 +161,9 @@ fi
 # which the shim dir does not ship (it carries python, python3, pip, pip3, pipx
 # and uv), then the usual absolute install locations, each skipped where it
 # does not exist, so a Mac whose only real Python is the system one is still
-# found. A path already probed is not probed again: bare `python3` is often
-# /usr/bin/python3, which the ladder also names outright. Unlike bootstrap it
+# found. A path already probed with the same arguments is not probed again:
+# bare `python3` is often /usr/bin/python3, which the ladder also names
+# outright. Unlike bootstrap it
 # keeps `python` and the Windows `py` launcher and accepts any 3.x, as the code
 # it replaced did. The launcher's `-3` lives in PY_ARGS, so PY_CMD stays a
 # single path that callers quote.
@@ -208,7 +209,7 @@ _pick_python() {
   fi
   if [ -n "${AI_BRAIN_PYTHON:-}" ]; then
     resolved="$(command -v "$AI_BRAIN_PYTHON" 2>/dev/null || true)"
-    [ -z "$resolved" ] || tried="$tried$resolved:"
+    [ -z "$resolved" ] || tried="$tried$resolved|:"
     if [ -n "$resolved" ] && _probe_python "$resolved" "" "$probe"; then
       PY_CMD="$resolved"
     else
@@ -223,11 +224,13 @@ _pick_python() {
                 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
       resolved="$(command -v "$cand" 2>/dev/null || true)"
       [ -n "$resolved" ] || continue
-      case "$tried" in *":$resolved:"*) continue ;; esac
-      tried="$tried$resolved:"
       args=""
       # The Windows launcher needs -3 to guarantee a Python 3 interpreter.
       if [ "$cand" = "py" ]; then args="-3"; fi
+      # One probe per path AND args: the launcher named by AI_BRAIN_PYTHON,
+      # probed bare, must not block its own -3 probe here.
+      case "$tried" in *":$resolved|$args:"*) continue ;; esac
+      tried="$tried$resolved|$args:"
       if _probe_python "$resolved" "$args" "$probe"; then
         PY_CMD="$resolved"
         PY_ARGS="$args"

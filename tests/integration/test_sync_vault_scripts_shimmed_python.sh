@@ -32,13 +32,15 @@
 #   * exits 0 printing advice -- an exit-code probe adopts it; only the
 #     sentinel the probe file prints back rejects it.
 #
-# Legs 2-11 and 13 source the probe block lifted verbatim from the shipped
+# Legs 2-11, 13 and 14 source the probe block lifted verbatim from the shipped
 # script; leg 12 runs the whole script end to end, so the two places that USE
 # what the block picked are exercised too; leg 1 runs a copy of the old code.
 # All of them run in a cleared environment with a PATH built from scratch: the
-# dirs under test plus a TOOLS dir holding only the commands the block runs.
-# The verdict then cannot depend on the developer's own PATH (a Homebrew `py`
-# launcher, the real plugin shim) or on an exported AI_BRAIN_PYTHON.
+# dirs under test plus a TOOLS dir holding only the commands the block runs
+# (leg 12 appends the caller's PATH behind those for the script's other
+# tools). The verdict then cannot depend on the developer's own PATH (a
+# Homebrew `py` launcher, the real plugin shim) or on an exported
+# AI_BRAIN_PYTHON.
 
 set -uo pipefail
 unset AI_BRAIN_PYTHON
@@ -345,14 +347,16 @@ fi
 # The legs above drive the extracted block. This one runs the real script with
 # no --vault, so both places that USE PY_CMD + PY_ARGS run: the stdin read of
 # settings.json and the _meta_resolver.py file call. The only interpreter is a
-# py launcher that refuses to run without -3, behind the wrapper. A dry run
-# writes nothing.
+# py launcher that refuses to run without -3, behind the wrapper. The full
+# script needs more tools than TOOLS holds, so the caller's PATH goes BEHIND
+# the dirs under test: the wrapper still shadows python3/python and the stub
+# is reached before any versioned name. A dry run writes nothing.
 E2E="$WORK/e2e"; EVAULT="$E2E/vault"; EHOME="$E2E/home"
 mkdir -p "$EVAULT/⚙️ Meta/scripts" "$EVAULT/⚙️ Meta/Decisions" "$EVAULT/⚙️ Meta/Sessions" \
          "$EHOME/.claude"
 printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"python3 %s/⚙️ Meta/scripts/x.py"}]}]}}\n' \
     "$EVAULT" > "$EHOME/.claude/settings.json"
-out="$(env -i HOME="$EHOME" USERPROFILE="$EHOME" PATH="$SHIM:$PYDIR:/usr/bin:/bin" \
+out="$(env -i HOME="$EHOME" USERPROFILE="$EHOME" PATH="$SHIM:$PYDIR:$PATH" \
        "$BASH" "$SYNC" --dry-run 2>&1)"
 written="$(find "$EVAULT" "$EHOME" -type f | wc -l | tr -d ' ')"
 if printf '%s\n' "$out" | grep -q '^meta: ' && [ "$written" = 1 ]; then
@@ -374,6 +378,16 @@ if [ "$runs" = 1 ] && [ "$cmd" = "$REALDIR/python3.12" ]; then
     pass "a candidate that already failed is not run a second time"
 else
     fail "the failing stub ran $runs time(s) (want 1); picked '$cmd'"
+fi
+
+# --- LEG 14: the same path with DIFFERENT args is still tried ----------------
+# AI_BRAIN_PYTHON pointing at the py launcher is probed without -3 and fails;
+# the ladder's own `py` entry, probed WITH -3, must not be skipped as a repeat.
+res="$(probe "$SHIM:$PYDIR:$TOOLS" AI_BRAIN_PYTHON="$PYDIR/py")"; cmd="${res%%|*}"; args="${res#*|}"
+if [ "$cmd" = "$PYDIR/py" ] && [ "$args" = "-3" ]; then
+    pass "a failed override does not block the same launcher's own -3 probe"
+else
+    fail "the py launcher was skipped after the override failed (PY_CMD='$cmd' PY_ARGS='$args')"
 fi
 
 echo
