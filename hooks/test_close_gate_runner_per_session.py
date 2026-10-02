@@ -47,6 +47,15 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Windows cp1252-console safety (ai-brain-starter#313). Module scope, not
+# __main__: every scenario below runs and prints at import time, and the labels
+# carry vault paths under the decorated meta folder.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # Python 3.7+
+    except (AttributeError, ValueError):
+        pass
+
 HOOKS = Path(__file__).resolve().parent
 REPO = HOOKS.parent
 GATE = HOOKS / "verify-session-close-cascade.py"

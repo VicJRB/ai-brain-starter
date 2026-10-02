@@ -252,7 +252,7 @@ def get_last_assistant_text(transcript_path: str) -> str:
     if not transcript_path or not os.path.exists(transcript_path):
         return ""
     try:
-        with open(transcript_path) as f:
+        with open(transcript_path, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
     except Exception:
         return ""
@@ -353,7 +353,8 @@ def uncommitted_session_artifacts(worktree_slug: str) -> list[str]:
             ["git", "-C", str(VAULT_ROOT), "status", "--short",
              "--", f"{META_NAME}/Sessions/", f"{META_NAME}/Decisions/",
              f"{META_NAME}/Session Captures.md"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10,
         )
     except Exception:
         return []
@@ -402,7 +403,7 @@ def runner_ran_recently(report: Path | None = None) -> bool:
     if not report.exists():
         return False
     try:
-        text = report.read_text(errors="replace")
+        text = report.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return False
     m = re.search(r"RUNNER COMPLETE @ (\S+)", text)
