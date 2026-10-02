@@ -296,17 +296,29 @@ if [ -d "$VAULT/.git" ] || git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1; 
     # also holds other live sessions' decisions, and staging them commits
     # their half-written work under this session's message. A decision whose
     # frontmatter names its owner (`session_id:`) is staged only when the
-    # owner is this session; one naming no owner is staged as before. If the
-    # filter cannot run, nothing is staged: the files stay on disk and daily
-    # maintenance commits them.
+    # owner is this session; one naming no owner is staged as before. The
+    # owner parse is kept identical to _owner_value() in
+    # hooks/verify-session-close-cascade.py. Paths travel as UTF-8 BYTES:
+    # Windows decodes piped stdio as cp1252, which has no byte 0x8F, and the
+    # default "⚙️ Meta" folder name contains one. If the filter cannot run,
+    # nothing is staged: the files stay on disk and daily maintenance
+    # commits them.
     OWNED_FILTER=""
     read -r -d '' OWNED_FILTER <<'PY' || true
 import re, sys
 sid = sys.argv[1]
 line = re.compile(r"^session_id:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
-for path in sys.stdin.read().splitlines():
+def owner_value(raw):
+    raw = raw.strip()
+    if raw[:1] in ("\"", "'"):
+        end = raw.find(raw[0], 1)
+        return raw[1:end] if end != -1 else raw[1:]
+    return raw.split(" #", 1)[0].strip()
+for raw_path in sys.stdin.buffer.read().split(b"\n"):
+    if not raw_path:
+        continue
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        with open(raw_path, encoding="utf-8", errors="replace") as f:
             head = f.read(4096)
     except OSError:
         continue
@@ -314,9 +326,9 @@ for path in sys.stdin.read().splitlines():
     if head.startswith("---"):
         end = head.find("\n---", 3)
         m = line.search(head[: end if end != -1 else len(head)])
-        owner = m.group(1).strip("\"'") if m else ""
+        owner = owner_value(m.group(1)) if m else ""
     if not owner or owner == sid:
-        print(path)
+        sys.stdout.buffer.write(raw_path + b"\n")
 PY
     while IFS= read -r decision_file; do
       [ -f "$decision_file" ] && PATHS_TO_STAGE+=("$decision_file")
@@ -334,13 +346,24 @@ PY
     [ -f "$META_DIR/Last Session.md" ] && PATHS_TO_STAGE+=("$META_DIR/Last Session.md")
     [ -f "$META_DIR/Decision Log.md" ] && PATHS_TO_STAGE+=("$META_DIR/Decision Log.md")
 
-    if [ ${#PATHS_TO_STAGE[@]} -gt 0 ]; then
-      cd "$VAULT" && {
-        git add "${PATHS_TO_STAGE[@]}" 2>>"$ERROR_LOG" \
-          && git diff --cached --quiet \
-          || git commit -m "session: ${WORKTREE_NAME} ${DATE}" >/dev/null 2>>"$ERROR_LOG" \
-          || log_err "git snapshot commit failed"
-      }
+    # Commit ONLY these paths. A bare `git commit` takes the whole index, so
+    # anything a parallel session had already staged (its own commit failed
+    # or raced) would ride along under this session's message. `--only`
+    # commits just the named paths and leaves the rest staged for its owner;
+    # the same reason vault-safe-commit.sh uses it. `--only` refuses a path
+    # git does not know, so each path is added on its own and only the ones
+    # git accepted are committed (an ignored aggregator output must not sink
+    # the whole snapshot).
+    if [ ${#PATHS_TO_STAGE[@]} -gt 0 ] && cd "$VAULT"; then
+      ADDED_PATHS=()
+      for stage_path in "${PATHS_TO_STAGE[@]}"; do
+        git add -- "$stage_path" 2>>"$ERROR_LOG" && ADDED_PATHS+=("$stage_path")
+      done
+      if [ ${#ADDED_PATHS[@]} -gt 0 ] \
+          && ! git diff --cached --quiet -- "${ADDED_PATHS[@]}"; then
+        git commit --only -m "session: ${WORKTREE_NAME} ${DATE}" -- "${ADDED_PATHS[@]}" \
+          >/dev/null 2>>"$ERROR_LOG" || log_err "git snapshot commit failed"
+      fi
     fi
   else
     log_err "git index.lock held (or git dir unresolvable) after ${VAULT_GIT_LOCK_MAX_WAIT:-60}s; skipped snapshot"
