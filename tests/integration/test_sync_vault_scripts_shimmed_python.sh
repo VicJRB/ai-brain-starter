@@ -32,11 +32,13 @@
 #   * exits 0 printing advice -- an exit-code probe adopts it; only the
 #     sentinel the probe file prints back rejects it.
 #
-# Every leg sources the probe block lifted verbatim from the shipped script, in
-# a cleared environment with a PATH built from scratch: the dirs under test
-# plus a TOOLS dir holding only the commands the block runs. The verdict then
-# cannot depend on the developer's own PATH (a Homebrew `py` launcher, the real
-# plugin shim) or on an exported AI_BRAIN_PYTHON.
+# Legs 2-11 and 13 source the probe block lifted verbatim from the shipped
+# script; leg 12 runs the whole script end to end, so the two places that USE
+# what the block picked are exercised too; leg 1 runs a copy of the old code.
+# All of them run in a cleared environment with a PATH built from scratch: the
+# dirs under test plus a TOOLS dir holding only the commands the block runs.
+# The verdict then cannot depend on the developer's own PATH (a Homebrew `py`
+# launcher, the real plugin shim) or on an exported AI_BRAIN_PYTHON.
 
 set -uo pipefail
 unset AI_BRAIN_PYTHON
@@ -179,6 +181,7 @@ fi
 
 # --- LEG 2: the shipped probe reaches past the wrapper, and what it picks runs a file
 res="$(probe "$SHIM:$REALDIR:$TOOLS")"; cmd="${res%%|*}"
+noise="$(head -c 200 "$ERR")"
 ran="$(runs_file "$SHIM:$REALDIR:$TOOLS")"
 if [ -z "$cmd" ]; then
     fail "the shipped probe returned EMPTY behind the wrapper -- the silent no-op is back"
@@ -186,8 +189,10 @@ elif [ "$cmd" != "$REALDIR/python3.12" ]; then
     fail "expected the versioned name behind the wrapper ($REALDIR/python3.12), picked '$cmd'"
 elif [ "$ran" != "FILE_RAN" ]; then
     fail "the chosen interpreter did not run a script file (picked '$cmd', got '$ran')"
+elif [ -n "$noise" ]; then
+    fail "probing past the wrapper leaked its refusal to stderr on a run that worked: $noise"
 else
-    pass "the shipped probe reaches past the wrapper, and its pick runs a file ($cmd)"
+    pass "the shipped probe reaches past the wrapper quietly, and its pick runs a file ($cmd)"
 fi
 
 # --- LEG 3: the ASYMMETRIC wrapper must not be adopted ----------------------
@@ -283,6 +288,26 @@ else
     fail "mktemp failure: picked '$cmd', ran '$ran', warned=$warned"
 fi
 
+# --- LEG 9b: a temp dir that cannot be written -------------------------------
+# Same fallback, and the failed write must not print its own error ahead of
+# the WARN. Skipped for a user who can write a 555 dir anyway (root).
+RODIR="$WORK/ro"; mkdir -p "$RODIR"; chmod 555 "$RODIR"
+ROMK="$WORK/romk"; mkdir -p "$ROMK"
+mkscript "$ROMK/mktemp" "echo \"$RODIR\""
+if ( : > "$RODIR/.w" ) 2>/dev/null; then
+    rm -f "$RODIR/.w"
+    echo "  SKIP: this user can write a read-only dir, so the case cannot be staged"
+else
+    res="$(probe "$ROMK:$REALDIR:$TOOLS")"; cmd="${res%%|*}"
+    other="$(grep -v 'WARN' "$ERR" | head -c 200)"
+    if [ "$cmd" = "$REALDIR/python3.12" ] && grep -q 'WARN.*probe' "$ERR" && [ -z "$other" ]; then
+        pass "an unwritable temp dir: the WARN is all it prints, and it still resolves"
+    else
+        fail "unwritable temp dir: picked '$cmd', stderr: $(head -c 200 "$ERR")"
+    fi
+fi
+chmod 755 "$RODIR" 2>/dev/null || true
+
 # --- LEG 10: the probe's temp dir is removed ---------------------------------
 LOGMK="$WORK/logmk"; mkdir -p "$LOGMK"
 MKLOG="$WORK/mktemp.log"; : > "$MKLOG"
@@ -303,13 +328,52 @@ else
     fail "probe temp dirs: $made created, $left left behind"
 fi
 
-# --- LEG 11: MEDDLING CONTROL - no wrapper, still resolves, says nothing -----
-res="$(probe "$REALDIR:$TOOLS")"; cmd="${res%%|*}"
-ran="$(runs_file "$REALDIR:$TOOLS")"
-if [ "$cmd" = "$REALDIR/python3.12" ] && [ "$ran" = "FILE_RAN" ] && [ ! -s "$ERR" ]; then
-    pass "with no wrapper on PATH it resolves without a word on stderr ($cmd)"
+# --- LEG 11: MEDDLING CONTROL - a working bare python3 keeps first place -----
+# With no wrapper, the old code took the first working `python3` on PATH (an
+# activated venv, say). The fallbacks must not change that.
+BAREDIR="$WORK/bare"; mkdir -p "$BAREDIR"
+ln -s "$REAL" "$BAREDIR/python3"
+res="$(probe "$BAREDIR:$REALDIR:$TOOLS")"; cmd="${res%%|*}"
+ran="$(runs_file "$BAREDIR:$REALDIR:$TOOLS")"
+if [ "$cmd" = "$BAREDIR/python3" ] && [ "$ran" = "FILE_RAN" ] && [ ! -s "$ERR" ]; then
+    pass "with no wrapper, the first working python3 on PATH still wins, silently"
 else
-    fail "clean PATH: picked '$cmd', ran '$ran', stderr '$(head -c 200 "$ERR")'"
+    fail "clean PATH: expected $BAREDIR/python3, picked '$cmd', ran '$ran', stderr '$(head -c 200 "$ERR")'"
+fi
+
+# --- LEG 12: END TO END through the shipped call sites -----------------------
+# The legs above drive the extracted block. This one runs the real script with
+# no --vault, so both places that USE PY_CMD + PY_ARGS run: the stdin read of
+# settings.json and the _meta_resolver.py file call. The only interpreter is a
+# py launcher that refuses to run without -3, behind the wrapper. A dry run
+# writes nothing.
+E2E="$WORK/e2e"; EVAULT="$E2E/vault"; EHOME="$E2E/home"
+mkdir -p "$EVAULT/⚙️ Meta/scripts" "$EVAULT/⚙️ Meta/Decisions" "$EVAULT/⚙️ Meta/Sessions" \
+         "$EHOME/.claude"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"python3 %s/⚙️ Meta/scripts/x.py"}]}]}}\n' \
+    "$EVAULT" > "$EHOME/.claude/settings.json"
+out="$(env -i HOME="$EHOME" USERPROFILE="$EHOME" PATH="$SHIM:$PYDIR:/usr/bin:/bin" \
+       "$BASH" "$SYNC" --dry-run 2>&1)"
+written="$(find "$EVAULT" "$EHOME" -type f | wc -l | tr -d ' ')"
+if printf '%s\n' "$out" | grep -q '^meta: ' && [ "$written" = 1 ]; then
+    pass "end to end: the vault comes from settings.json and its Meta folder resolves, via py -3"
+else
+    fail "end to end via py -3: files under vault+home=$written (want 1), output: $(printf '%s' "$out" | head -c 300)"
+fi
+
+# --- LEG 13: a path that already failed is not run again ---------------------
+# Bare python3 is often /usr/bin/python3, which the ladder also names outright.
+# A counting stub stands in for it, reached first as AI_BRAIN_PYTHON and then
+# again as the bare name.
+CNT="$WORK/count"; mkdir -p "$CNT"; CNTLOG="$WORK/count.log"; : > "$CNTLOG"
+mkscript "$CNT/python3" "echo run >> \"$CNTLOG\"
+exit 1"
+res="$(probe "$CNT:$REALDIR:$TOOLS" AI_BRAIN_PYTHON="$CNT/python3")"; cmd="${res%%|*}"
+runs="$(wc -l < "$CNTLOG" | tr -d ' ')"
+if [ "$runs" = 1 ] && [ "$cmd" = "$REALDIR/python3.12" ]; then
+    pass "a candidate that already failed is not run a second time"
+else
+    fail "the failing stub ran $runs time(s) (want 1); picked '$cmd'"
 fi
 
 echo

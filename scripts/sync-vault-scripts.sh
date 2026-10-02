@@ -161,9 +161,11 @@ fi
 # which the shim dir does not ship (it carries python, python3, pip, pip3, pipx
 # and uv), then the usual absolute install locations, each skipped where it
 # does not exist, so a Mac whose only real Python is the system one is still
-# found. Unlike bootstrap it keeps `python` and the Windows `py` launcher and
-# accepts any 3.x, as the code it replaced did. The launcher's `-3` lives in
-# PY_ARGS, so PY_CMD stays a single path that callers quote.
+# found. A path already probed is not probed again: bare `python3` is often
+# /usr/bin/python3, which the ladder also names outright. Unlike bootstrap it
+# keeps `python` and the Windows `py` launcher and accepts any 3.x, as the code
+# it replaced did. The launcher's `-3` lives in PY_ARGS, so PY_CMD stays a
+# single path that callers quote.
 #
 # The probe runs a FILE, never `-c` or `-`: the asymmetric shim shape
 # documented in tests/integration/lib/real_python.sh forwards `-c`/`-`/`-m` to
@@ -190,12 +192,14 @@ _probe_python() {  # $1 interpreter path, $2 "" or "-3", $3 probe file ("" = std
   [ "$out" = "__ai_brain_python_ok__" ]
 }
 _pick_python() {
-  local cand args resolved probe_dir="" probe=""
+  local cand args resolved tried=":" probe_dir="" probe=""
   probe_dir="$(mktemp -d 2>/dev/null)" || probe_dir=""
   if [ -n "$probe_dir" ]; then
     probe="$probe_dir/ai_brain_sync_probe.py"
+    # 2>/dev/null comes FIRST so a failing `>` (read-only or full temp dir)
+    # cannot print its own error ahead of the WARN below.
     printf '%s\n' 'import sys' 'if sys.version_info[0] == 3:' \
-      '    print("__ai_brain_python_ok__")' > "$probe" 2>/dev/null || probe=""
+      '    print("__ai_brain_python_ok__")' 2>/dev/null > "$probe" || probe=""
   fi
   if [ -z "$probe" ]; then
     echo "sync-vault-scripts: WARN: could not write a Python probe file to a" \
@@ -204,6 +208,7 @@ _pick_python() {
   fi
   if [ -n "${AI_BRAIN_PYTHON:-}" ]; then
     resolved="$(command -v "$AI_BRAIN_PYTHON" 2>/dev/null || true)"
+    [ -z "$resolved" ] || tried="$tried$resolved:"
     if [ -n "$resolved" ] && _probe_python "$resolved" "" "$probe"; then
       PY_CMD="$resolved"
     else
@@ -218,6 +223,8 @@ _pick_python() {
                 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
       resolved="$(command -v "$cand" 2>/dev/null || true)"
       [ -n "$resolved" ] || continue
+      case "$tried" in *":$resolved:"*) continue ;; esac
+      tried="$tried$resolved:"
       args=""
       # The Windows launcher needs -3 to guarantee a Python 3 interpreter.
       if [ "$cand" = "py" ]; then args="-3"; fi
