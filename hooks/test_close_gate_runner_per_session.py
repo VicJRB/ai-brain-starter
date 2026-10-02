@@ -34,6 +34,13 @@ Assertions:
   8. End to end: the runner command detect-closing-signal.py injects carries
      this session's id, and EXECUTING that exact line satisfies this
      session's gate. With no usable id the command carries no --session.
+  9. The gate's own fix-it line (`Run: ...` in the block), EXECUTED from the
+     worktree the session runs in, clears the gate: also when that worktree
+     carries an older committed copy of the runner (a vault-relative path
+     would run that copy, which writes only the shared report, forever).
+ 10. `--session=<id>` is the same as `--session <id>`.
+ 11. ABS_RUNNER_REPORT set but EMPTY means the default on both sides (the
+     runner's `${VAR:-default}` treats empty as unset; the gate must too).
 """
 from __future__ import annotations
 
@@ -137,10 +144,15 @@ class Env:
         env.pop("ANTHROPIC_API_KEY", None)
         return env
 
-    def run_runner(self, session: str | None) -> subprocess.CompletedProcess:
+    def run_runner(self, session: str | None, *raw: str) -> subprocess.CompletedProcess:
         args = ["bash", str(self.runner)] + (["--session", session] if session else [])
-        return subprocess.run(args, capture_output=True, text=True, env=self.env(),
-                              cwd=str(self.wt), timeout=120, **UTF8)
+        return subprocess.run(args + list(raw), capture_output=True, text=True,
+                              env=self.env(), cwd=str(self.wt), timeout=120, **UTF8)
+
+    def run_line(self, line: str) -> subprocess.CompletedProcess:
+        """Execute a command line exactly as a model would, from the worktree."""
+        return subprocess.run(["bash", "-c", line], capture_output=True, text=True,
+                              env=self.env(), cwd=str(self.wt), timeout=120, **UTF8)
 
     def gate(self, session: str | None) -> tuple[int, str]:
         payload = {"transcript_path": str(self.transcript), "cwd": str(self.wt)}
@@ -250,6 +262,17 @@ def unsafe_id(e: Env) -> None:
         "escape" in p.name for p in e.root.rglob("*")), "nothing was written for the unsafe id")
     rc, err = e.gate(bad)
     check(rc == 0, f"the gate treats an unsafe id as no id (rc={rc})", err[-500:])
+    # The runner (bash) and the gate (Python) must reject the SAME ids, or one
+    # side writes a report the other never reads.
+    for odd in ("a b", "caf\u00e9", "x\ny", "a]b", "a\\b", "\uff21"):
+        for p in e.reports():
+            p.unlink()
+        e.run_runner(odd)
+        names = [p.name for p in e.reports()]
+        rc, err = e.gate(odd)
+        check(names == [e.report.name] and rc == 0,
+              f"runner and gate both treat {odd!r} as no id (reports={names}, rc={rc})",
+              err[-300:])
 
 
 # ── 8: end to end through the injected command ────────────────────────────────
@@ -298,6 +321,80 @@ def injected_command_without_id(e: Env) -> None:
         line = injected_runner_line(e, sid)
         check(line != "" and "--session" not in line,
               f"no usable id ({sid!r}) -> the injected command carries no --session ({line!r})")
+
+
+# ── 9: the gate's own fix-it line, executed from the worktree ────────────────
+def run_block_line(e: Env) -> None:
+    e.run_runner(B)
+    rc, err = e.gate(A)
+    lines = [ln.strip()[len("Run: "):] for ln in err.splitlines()
+             if ln.strip().startswith("Run: ") and "session-close-runner.sh" in ln]
+    check(rc == 2 and len(lines) == 1, f"A is blocked with one Run: line (rc={rc}, {lines})",
+          err[-500:])
+    if len(lines) != 1:
+        return
+    r = e.run_line(lines[0])
+    check(r.returncode == 0, f"the Run: line executes from the worktree (rc={r.returncode})",
+          r.stderr[-300:])
+    rc, err = e.gate(A)
+    check(rc == 0, f"executing the gate's own Run: line clears A's gate (rc={rc})", err[-500:])
+
+
+@scenario
+def block_line_clears_gate(e: Env) -> None:
+    run_block_line(e)
+
+
+@scenario
+def block_line_ignores_worktree_copy(e: Env) -> None:
+    # A vault that tracks its scripts in git: the worktree holds its own,
+    # older committed copy of the runner, which writes only the shared report.
+    stale = e.wt / META / "scripts" / "session-close-runner.sh"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(
+        "#!/bin/bash\n"
+        'REPORT="${ABS_RUNNER_REPORT:-/tmp/abs-session-close-runner.report}"\n'
+        "printf 'RUNNER COMPLETE @ %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > \"$REPORT\"\n",
+        encoding="utf-8")
+    run_block_line(e)
+
+
+# ── 10: --session=<id> ────────────────────────────────────────────────────────
+@scenario
+def session_equals_form(e: Env) -> None:
+    e.run_runner(None, f"--session={A}")
+    names = [p.name for p in e.reports()]
+    check(any(A in n for n in names) and e.report.name not in names,
+          f"--session={A} writes A's own report, not the shared one ({names})")
+    rc, err = e.gate(A)
+    check(rc == 0, f"--session=<id> clears A's gate (rc={rc})", err[-500:])
+
+
+# ── 11: an empty ABS_RUNNER_REPORT is the default, as the runner reads it ────
+def empty_override_is_default() -> None:
+    probe = (
+        "import importlib.util, sys\n"
+        "spec = importlib.util.spec_from_file_location('gate', sys.argv[1])\n"
+        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+        "print(m.RUNNER_REPORT); print(m.session_runner_report('sessA'))\n"
+    )
+    env = {k: v for k, v in os.environ.items()}
+    home = Path(tempfile.mkdtemp(prefix="close-gate-runner-home-"))
+    try:
+        env.update(HOME=str(home), USERPROFILE=str(home), ABS_RUNNER_REPORT="")
+        r = subprocess.run([sys.executable, "-c", probe, str(GATE)], capture_output=True,
+                           text=True, env=env, timeout=60, **UTF8)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+    got = r.stdout.splitlines()
+    default = (str(Path(tempfile.gettempdir()) / "abs-session-close-runner.report")
+               if os.name == "nt" else "/tmp/abs-session-close-runner.report")
+    want = [default, default[: -len(".report")] + ".sessA.report"]
+    check(got == want, f"empty ABS_RUNNER_REPORT -> the gate uses the default ({got})",
+          r.stderr[-300:])
+
+
+empty_override_is_default()
 
 
 if __name__ == "__main__":

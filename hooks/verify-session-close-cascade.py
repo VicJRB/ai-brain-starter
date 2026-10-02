@@ -181,7 +181,10 @@ _DEFAULT_RUNNER_REPORT = (
     str(Path(tempfile.gettempdir()) / "abs-session-close-runner.report")
     if os.name == "nt" else "/tmp/abs-session-close-runner.report"
 )
-RUNNER_REPORT = Path(os.environ.get("ABS_RUNNER_REPORT", _DEFAULT_RUNNER_REPORT))
+# `or`, not a .get() default: set-but-empty means the default here exactly as
+# it does in the runner's `${ABS_RUNNER_REPORT:-...}`, or the two sides would
+# look in different places (an empty Path is ".", relative to the cwd).
+RUNNER_REPORT = Path(os.environ.get("ABS_RUNNER_REPORT") or _DEFAULT_RUNNER_REPORT)
 RUNNER_FRESH_SECONDS = 1800  # 30 minutes
 
 # Gate 2 is scoped by session. The shared report is overwritten by every
@@ -507,11 +510,16 @@ def main() -> int:
             if scoped else ""
         )
         session_arg = f" --session {session_id}" if scoped else ""
+        # Absolute, never vault-relative: from a worktree a relative path runs
+        # the worktree's own committed copy, which can predate per-session
+        # reports (it would write only the shared report, and this gate would
+        # block again on every retry) or not exist at all. RUNNER_SCRIPT is the
+        # copy runner_report_for() judged, the one the injected cascade runs.
         failures.append(
             f"  • session-close-runner.sh report is {runner_state}\n"
             f"    Path: {runner_report}\n"
             f"{owner}"
-            f"    Run: bash \"{META_NAME}/scripts/session-close-runner.sh\"{session_arg}\n"
+            f"    Run: bash \"{RUNNER_SCRIPT}\"{session_arg}\n"
             f"    The runner handles Phase 0c-0e + Phase 2 aggregators +\n"
             f"    Phase 2c worktree settle deterministically."
         )
