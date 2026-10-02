@@ -291,10 +291,37 @@ if [ -d "$VAULT/.git" ] || git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1; 
     # Stage only paths we know about
     PATHS_TO_STAGE=()
     [ -f "$SESSION_FILE" ] && PATHS_TO_STAGE+=("$SESSION_FILE")
-    # Recently-touched decision files (within this minute)
+    # Recently-touched decision files (dated today, touched in the last 10
+    # minutes) -- but only THIS session's. On a shared checkout that window
+    # also holds other live sessions' decisions, and staging them commits
+    # their half-written work under this session's message. A decision whose
+    # frontmatter names its owner (`session_id:`) is staged only when the
+    # owner is this session; one naming no owner is staged as before. If the
+    # filter cannot run, nothing is staged: the files stay on disk and daily
+    # maintenance commits them.
+    OWNED_FILTER=""
+    read -r -d '' OWNED_FILTER <<'PY' || true
+import re, sys
+sid = sys.argv[1]
+line = re.compile(r"^session_id:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+for path in sys.stdin.read().splitlines():
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            head = f.read(4096)
+    except OSError:
+        continue
+    owner = ""
+    if head.startswith("---"):
+        end = head.find("\n---", 3)
+        m = line.search(head[: end if end != -1 else len(head)])
+        owner = m.group(1).strip("\"'") if m else ""
+    if not owner or owner == sid:
+        print(path)
+PY
     while IFS= read -r decision_file; do
       [ -f "$decision_file" ] && PATHS_TO_STAGE+=("$decision_file")
-    done < <(find "$META_DIR/Decisions" -maxdepth 1 -name "${TIMESTAMP_FILE:0:10}*.md" -mmin -10 2>/dev/null)
+    done < <(find "$META_DIR/Decisions" -maxdepth 1 -name "${TIMESTAMP_FILE:0:10}*.md" -mmin -10 2>/dev/null \
+               | "$PYTHON" -c "$OWNED_FILTER" "$SESSION_ID" 2>>"$ERROR_LOG")
 
     # Captures file if modified
     if [ -f "$META_DIR/Session Captures.md" ]; then
