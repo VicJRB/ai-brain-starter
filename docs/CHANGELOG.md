@@ -9,6 +9,18 @@ description: What's new in AI Brain Starter — plain English, no jargon
 
 ---
 
+## 2026-10-01: the version check now measures the Claude Code that is running your session, and says when your installed copies disagree
+
+**Who this affects:** anyone with more than one copy of Claude Code on the machine (an install per node version, Homebrew, the desktop app's own copy), and anyone who runs scheduled `claude -p` jobs. Everyone else sees no difference.
+
+The startup version check asked whichever `claude` your PATH found first, so it could tell a desktop session it was on one release while that session ran another, and it never looked at the copies your scheduled jobs use. Upgrading "the" install and checking it proved nothing about the others: two of three copies on one machine sat weeks behind while every upgrade was verified against the third.
+
+The check now asks the Claude Code process that started the session, and the line it prints says which file it asked (or that it fell back to PATH, and why). Its saved answer is kept per binary, so one copy's reading is not shown to a session running another. The one exception is a labeled fallback: when the running copy will not say its version, the copy on PATH is measured instead and that reading is saved for both. Upgrading the copy a session runs, or the copy on PATH, shows up straight away instead of after six hours. The upgrade hint names the install's own `--prefix`, because a plain `npm i -g` installs under whichever node comes first on PATH. When the copies it can find (on PATH and on each LaunchAgent's PATH, skipping any relative entry; in the usual install folders; and the newest desktop copy) are not all the same version, it prints one line naming the copies and their versions (up to eight). When they agree, it prints nothing, and a copy whose version it cannot read never counts as a different version. The `claude --version` runs are time-limited (this needs perl or `timeout`, which nearly every machine has): ten seconds each for the running copy and the PATH copy, five seconds each (twenty in all) for the copies the comparison checks, and thirty seconds for the whole comparison. The GitHub requests a refresh makes have no time limit, as before.
+
+The Python helper `scripts/_claude_router.py` had the same blind spot: when `claude` was not on PATH it tried one hardcoded node-version folder, which exists on exactly one machine. It now looks at every `~/local/node-*/bin/claude` plus the usual install folders and uses the newest, reading each version from the package file beside it without running it.
+
+---
+
 ## 2026-10-01: `/journal` dropped your messages on machines where `python3` refuses to run a script
 
 **Who this affects:** anyone who runs `/journal` with a message reader script in their vault (`journal-messages-fetch.py`), on a machine where a Python tool puts its own stand-in for `python3` first on the PATH. Some of those stand-ins answer `python3 some-script.py` with advice ("use `uv run python ...`") and exit with an error, while still running one-liners, so nothing looks broken.
@@ -18,6 +30,8 @@ The `/journal` context pull (`journal-preflight.py`) gathers every source in one
 The message reader now runs under the same interpreter as the pull. In the same edit, the pull reads its helper programs' output as UTF-8 instead of the console's code page, as the rest of this repo's scripts do.
 
 A new test runs the real pull with a script-refusing stand-in first on the PATH and checks that the messages arrive, and that putting the old call back turns it red. A second check reads every Python file under `scripts/` and `skills/` and fails when one starts another Python script through a bare `python3`, so the same mistake cannot return unnoticed.
+
+---
 
 ## 2026-09-29: a slash command you rewrote is kept on update, so keeping it no longer freezes your updates
 
