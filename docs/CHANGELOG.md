@@ -9,6 +9,16 @@ description: What's new in AI Brain Starter — plain English, no jargon
 
 ---
 
+## 2026-10-04: asking whether a sync has finished no longer starts the meeting workflow
+
+**Who this affects:** anyone who syncs files, a vault or a calendar and asks Claude about it, and anyone who asks whether a meeting is over.
+
+The meeting-workflow hook treated "sync" as a meeting, so "check if the sync is finished" or "the sync's done" told Claude a meeting had just ended and to run the whole post-meeting cascade (find the transcript, update CRM files, to-dos, the Decision Log). A question like "check if the meeting is finished" did the same, because the hook read it as a report rather than a question.
+
+Now a bare "sync" only counts as a meeting when you say you just had or wrapped one up ("I just had a sync", "wrapped up the sync") or name who it was with ("the sync with Dana is done"). A phrase that comes right after "if" or "whether" is read as a question and does not start the workflow. Everything that started it before still does, including "I just had a meeting", "the kickoff is done" and "sync with Sam just ended".
+
+---
+
 ## 2026-10-01: the version check now measures the Claude Code that is running your session, and says when your installed copies disagree
 
 **Who this affects:** anyone with more than one copy of Claude Code on the machine (an install per node version, Homebrew, the desktop app's own copy), and anyone who runs scheduled `claude -p` jobs. Everyone else sees no difference.
